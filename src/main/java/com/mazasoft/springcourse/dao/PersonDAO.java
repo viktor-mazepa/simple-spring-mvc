@@ -1,17 +1,19 @@
 package com.mazasoft.springcourse.dao;
 
-import com.mazasoft.springcourse.config.DbManager;
 import com.mazasoft.springcourse.models.Person;
 import org.apache.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
+import org.springframework.jdbc.core.BeanPropertyRowMapper;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 
 @Component
 public class PersonDAO {
@@ -19,90 +21,86 @@ public class PersonDAO {
     Logger LOGGER = Logger.getLogger(PersonDAO.class);
 
     @Autowired
-    DbManager dbManager;
+    JdbcTemplate jdbcTemplate;
 
     public Collection<Person> index() {
-        Collection<Person> people = new ArrayList<>();
-        try {
-            Statement statement = dbManager.getConnection().createStatement();
-            ResultSet resultSet = statement.executeQuery(GET_ALL_PEOPLE_QUERY);
-            while (resultSet.next()) {
-                Person person = new Person();
-                person.setId(resultSet.getInt("id"));
-                person.setName(resultSet.getString("name"));
-                person.setAge(resultSet.getInt("age"));
-                person.setEmail(resultSet.getString("email"));
-                people.add(person);
-            }
-        } catch (SQLException e) {
-            LOGGER.error("Exception in PersonDAO.index", e);
-            throw new RuntimeException(e);
+        return jdbcTemplate.query(GET_ALL_PEOPLE_QUERY, new BeanPropertyRowMapper<>(Person.class));
+    }
+
+    public Person show(int id) {
+        return jdbcTemplate.query(GET_PERSON_BY_ID_QUERY, new Object[]{id}, new BeanPropertyRowMapper<>(Person.class)).stream().findAny().orElse(null);
+
+    }
+
+    public Optional<Person> show(String email) {
+        return jdbcTemplate.query(GET_PERSON_BY_EMAIL_QUERY, new Object[]{email}, new BeanPropertyRowMapper<>(Person.class)).stream().findAny();
+    }
+
+    public void save(Person person) {
+        jdbcTemplate.update(INSERT_NEW_PERSON_QUERY, person.getName(), person.getAge(), person.getEmail(), person.getAddress());
+    }
+
+    public void update(int id, Person person) {
+        jdbcTemplate.update(UPDATE_PERSON_BY_ID_QUERY, person.getName(), person.getAge(), person.getEmail(),person.getAddress(), person.getId());
+    }
+
+    public void delete(int id) {
+        jdbcTemplate.update(DELETE_PERSON_BY_ID_QUERY, id);
+    }
+
+
+    /**
+     * Batch insert testing
+     */
+    public void testMultipleUpdate() {
+        Collection<Person> people = create1000persons();
+        long before = System.currentTimeMillis();
+        for (Person person : people) {
+            jdbcTemplate.update(INSERT_NEW_PERSON_WITH_ID_QUERY, person.getName(), person.getAge(), person.getEmail(), person.getAddress());
+        }
+        long after = System.currentTimeMillis();
+
+        LOGGER.info("PersonDAO.testMultipleUpdate: operation_duration = " + (after - before) + " ms");
+
+    }
+
+    private List<Person> create1000persons() {
+        List<Person> people = new ArrayList<>();
+        for (int i = 10; i < 1010; i++) {
+            people.add(new Person(i, "Name" + i, 34, "test" + i + "gmail.com", "some_address"));
         }
         return people;
     }
 
+    public void testBatchUpdate() {
+        List<Person> people = create1000persons();
+        long before = System.currentTimeMillis();
+        jdbcTemplate.batchUpdate(INSERT_NEW_PERSON_WITH_ID_QUERY, new BatchPreparedStatementSetter() {
+            @Override
+            public void setValues(PreparedStatement preparedStatement, int i) throws SQLException {
+                preparedStatement.setString(1, people.get(i).getName());
+                preparedStatement.setInt(2, people.get(i).getAge());
+                preparedStatement.setString(3, people.get(i).getEmail());
+                preparedStatement.setString(4, people.get(i).getAddress());
+            }
 
-    public Person show(int id) {
-        try {
-            PreparedStatement statement = dbManager.getConnection().prepareStatement(GET_PERSON_BY_ID_QUERY);
-            statement.setInt(1, id);
-            ResultSet resultSet = statement.executeQuery();
-            resultSet.next();
-            Person person = new Person();
-            person.setId(resultSet.getInt("id"));
-            person.setName(resultSet.getString("name"));
-            person.setAge(resultSet.getInt("age"));
-            person.setEmail(resultSet.getString("email"));
-            return person;
-        } catch (SQLException e) {
-            LOGGER.error("Exception in PersonDAO.show", e);
-            throw new RuntimeException(e);
-        }
-    }
+            @Override
+            public int getBatchSize() {
+                return people.size();
+            }
+        });
 
-    public void save(Person person) {
-        try {
-            PreparedStatement statement = dbManager.getConnection().prepareStatement(INSERT_NEW_PERSON_QUERY);
-            statement.setString(1, person.getName());
-            statement.setInt(2, person.getAge());
-            statement.setString(3, person.getEmail());
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            LOGGER.error("Exception in PersonDAO.save", e);
-            throw new RuntimeException(e);
-        }
+        long after = System.currentTimeMillis();
+        LOGGER.info("PersonDAO.testBatchUpdate: operation_duration = " + (after - before) + " ms");
 
     }
 
-    public void update(int id, Person person) {
-        try {
-            PreparedStatement statement = dbManager.getConnection().prepareStatement(UPDATE_PERSON_BY_ID_QUERY);
-            statement.setString(1, person.getName());
-            statement.setInt(2, person.getAge());
-            statement.setString(3, person.getEmail());
-            statement.setInt(4, person.getId());
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            LOGGER.error("Exception in PersonDAO.update", e);
-            throw new RuntimeException(e);
-        }
-    }
-
-    public void delete(int id) {
-        try {
-            PreparedStatement statement = dbManager.getConnection().prepareStatement(DELETE_PERSON_BY_ID_QUERY);
-            statement.setInt(1, id);
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            LOGGER.error("Exception in PersonDAO.delete", e);
-            throw new RuntimeException(e);
-        }
-        //people.removeIf(person -> person.getId()==id);
-    }
-
-    private String GET_ALL_PEOPLE_QUERY = "select * from person";
-    private String INSERT_NEW_PERSON_QUERY = "insert into person values((select max(id)+1 as id from person), ?,?,?)";
+    private String GET_ALL_PEOPLE_QUERY = "select * from person order by id";
+    private String INSERT_NEW_PERSON_QUERY = "insert into person(name, age, email, address) values(?,?,?,?)";
+    private String INSERT_NEW_PERSON_WITH_ID_QUERY = "insert into person (name, age, email, address) values( ?,?,?,?)";
     private String GET_PERSON_BY_ID_QUERY = "select * from person where id = ?";
-    private String UPDATE_PERSON_BY_ID_QUERY = "update person set name = ?, age = ?, email = ? where id = ?";
+    private String UPDATE_PERSON_BY_ID_QUERY = "update person set name = ?, age = ?, email = ?, address=? where id = ?";
     private String DELETE_PERSON_BY_ID_QUERY = "delete from person where id = ?";
+    private String GET_PERSON_BY_EMAIL_QUERY = "select * from person where email=?";
+
 }
